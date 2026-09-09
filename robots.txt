@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://aquashield-4nvt.onrender.com/sitemap.xml
