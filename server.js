@@ -1,10 +1,15 @@
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
+const { Resend } = require('resend');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
 const ADMIN_KEY = process.env.ADMIN_KEY || 'aquashield-demo';
+const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL || 'shalu.pragati11@gmail.com';
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const EMAIL_FROM = process.env.EMAIL_FROM || 'AquaShield <onboarding@resend.dev>';
+const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
 // Render-safe starter analytics. Data is kept in memory for the free MVP.
 // For a production launch, replace this store with a hosted database.
@@ -19,16 +24,68 @@ function visitorId(req){
   return crypto.createHash('sha256').update(raw + '|' + (req.get('user-agent') || '')).digest('hex').slice(0,20);
 }
 
+async function sendVisitNotification(visit) {
+  if (!resend) {
+    console.warn('RESEND_API_KEY is not configured. Visit email skipped.');
+    return;
+  }
+
+  const source = visit.source || 'direct';
+  const campaign = visit.campaign || 'none';
+  const referrer = visit.referrer || 'none';
+
+  const { data, error } = await resend.emails.send({
+    from: EMAIL_FROM,
+    to: [NOTIFY_EMAIL],
+    subject: 'AquaShield: New website visitor',
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.6;color:#102333">
+        <h2 style="margin-bottom:8px">Someone visited AquaShield</h2>
+        <p><strong>Time:</strong> ${new Date(visit.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</p>
+        <p><strong>Page:</strong> ${escapeHtml(visit.path)}</p>
+        <p><strong>Source:</strong> ${escapeHtml(source)}</p>
+        <p><strong>Campaign:</strong> ${escapeHtml(campaign)}</p>
+        <p><strong>Referrer:</strong> ${escapeHtml(referrer)}</p>
+        <p style="color:#627486;font-size:12px">This is an automated AquaShield visitor notification.</p>
+      </div>
+    `
+  });
+
+  if (error) {
+    console.error('Visitor email failed:', error);
+    return;
+  }
+
+  console.log('Visitor email sent:', data?.id || 'ok');
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 app.post('/api/track', (req,res)=>{
   const { path: page='/', source='direct', campaign='', referrer='' } = req.body || {};
-  visits.push({
+  const visit = {
     visitor_id: visitorId(req),
     path: page,
     source: source || 'direct',
     campaign,
     referrer,
     created_at: new Date().toISOString()
+  };
+
+  visits.push(visit);
+
+  // Do not delay the visitor response while the email is being sent.
+  sendVisitNotification(visit).catch((err) => {
+    console.error('Unexpected visitor email error:', err);
   });
+
   res.json({ok:true});
 });
 
